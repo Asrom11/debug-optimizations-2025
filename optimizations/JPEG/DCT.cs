@@ -1,69 +1,136 @@
 ﻿using System;
-using JPEG.Utilities;
+using System.Runtime.CompilerServices;
+using System.Threading.Tasks;
 
 namespace JPEG;
 
 public class DCT
 {
-	public static double[,] DCT2D(double[,] input)
-	{
-		var height = input.GetLength(0);
-		var width = input.GetLength(1);
-		var coeffs = new double[width, height];
+    private static readonly double[,] CosineTableX;
+    private static readonly double[,] CosineTableY;
+    private static readonly double[] AlphaValues;
 
-		MathEx.LoopByTwoVariables(
-			0, width,
-			0, height,
-			(u, v) =>
-			{
-				var sum = MathEx
-					.SumByTwoVariables(
-						0, width,
-						0, height,
-						(x, y) => BasisFunction(input[x, y], u, v, x, y, height, width));
+    static DCT()
+    {
+        const int size = 8;
+        CosineTableX = new double[size, size];
+        CosineTableY = new double[size, size];
+        AlphaValues = new double[size];
 
-				coeffs[u, v] = sum * Beta(height, width) * Alpha(u) * Alpha(v);
-			});
+        for (var u = 0; u < size; u++)
+        {
+            AlphaValues[u] = u == 0 ? 1.0 / Math.Sqrt(2.0) : 1.0;
 
-		return coeffs;
-	}
+            for (var x = 0; x < size; x++)
+            {
+                CosineTableX[u, x] = Math.Cos(((2.0 * x + 1.0) * u * Math.PI) / (2.0 * size));
+                CosineTableY[u, x] = Math.Cos(((2.0 * x + 1.0) * u * Math.PI) / (2.0 * size));
+            }
+        }
+    }
 
-	public static void IDCT2D(double[,] coeffs, double[,] output)
-	{
-		for (var x = 0; x < coeffs.GetLength(1); x++)
-		{
-			for (var y = 0; y < coeffs.GetLength(0); y++)
-			{
-				var sum = MathEx
-					.SumByTwoVariables(
-						0, coeffs.GetLength(1),
-						0, coeffs.GetLength(0),
-						(u, v) =>
-							BasisFunction(coeffs[u, v], u, v, x, y, coeffs.GetLength(0), coeffs.GetLength(1)) *
-							Alpha(u) * Alpha(v));
+    public static double[,] DCT2D(double[,] input)
+    {
+        var height = input.GetLength(0);
+        var width = input.GetLength(1);
+        var coeffs = new double[width, height];
+        var beta = 1.0 / width + 1.0 / height;
 
-				output[x, y] = sum * Beta(coeffs.GetLength(0), coeffs.GetLength(1));
-			}
-		}
-	}
+        var temp = new double[width, height];
 
-	public static double BasisFunction(double a, double u, double v, double x, double y, int height, int width)
-	{
-		var b = Math.Cos(((2d * x + 1d) * u * Math.PI) / (2 * width));
-		var c = Math.Cos(((2d * y + 1d) * v * Math.PI) / (2 * height));
+        Parallel.For(0, height, y =>
+        {
+            for (var u = 0; u < width; u++)
+            {
+                var sum = 0.0;
 
-		return a * b * c;
-	}
+                for (var x = 0; x < width; x++)
+                {
+                    var cosVal = (u < 8 && x < 8) ? CosineTableX[u, x] :
+                        Math.Cos(((2.0 * x + 1.0) * u * Math.PI) / (2.0 * width));
 
-	private static double Alpha(int u)
-	{
-		if (u == 0)
-			return 1 / Math.Sqrt(2);
-		return 1;
-	}
+                    sum += input[x, y] * cosVal;
+                }
 
-	private static double Beta(int height, int width)
-	{
-		return 1d / width + 1d / height;
-	}
+                temp[u, y] = sum;
+            }
+        });
+
+        Parallel.For(0, width, u =>
+        {
+            var alphaU = (u < AlphaValues.Length) ? AlphaValues[u] :
+                (u == 0 ? 1.0 / Math.Sqrt(2.0) : 1.0);
+
+            for (var v = 0; v < height; v++)
+            {
+                var alphaV = (v < AlphaValues.Length) ? AlphaValues[v] :
+                    (v == 0 ? 1.0 / Math.Sqrt(2.0) : 1.0);
+
+                var sum = 0.0;
+
+                for (var y = 0; y < height; y++)
+                {
+                    var cosVal = (v < 8 && y < 8) ? CosineTableY[v, y] :
+                        Math.Cos(((2.0 * y + 1.0) * v * Math.PI) / (2.0 * height));
+
+                    sum += temp[u, y] * cosVal;
+                }
+
+                coeffs[u, v] = sum * beta * alphaU * alphaV;
+            }
+        });
+
+        return coeffs;
+    }
+
+    public static void IDCT2D(double[,] coeffs, double[,] output)
+    {
+        var height = coeffs.GetLength(0);
+        var width = coeffs.GetLength(1);
+        var beta = 1.0 / width + 1.0 / height;
+
+        var temp = new double[width, height];
+
+        Parallel.For(0, width, x =>
+        {
+            for (var v = 0; v < height; v++)
+            {
+                var sum = 0.0;
+
+                for (var u = 0; u < width; u++)
+                {
+                    var alphaU = (u < AlphaValues.Length) ? AlphaValues[u] :
+                        (u == 0 ? 1.0 / Math.Sqrt(2.0) : 1.0);
+
+                    var cosVal = (u < 8 && x < 8) ? CosineTableX[u, x] :
+                        Math.Cos(((2.0 * x + 1.0) * u * Math.PI) / (2.0 * width));
+
+                    sum += coeffs[u, v] * alphaU * cosVal;
+                }
+
+                temp[x, v] = sum;
+            }
+        });
+
+        Parallel.For(0, width, x =>
+        {
+            for (var y = 0; y < height; y++)
+            {
+                var sum = 0.0;
+
+                for (var v = 0; v < height; v++)
+                {
+                    var alphaV = (v < AlphaValues.Length) ? AlphaValues[v] :
+                        (v == 0 ? 1.0 / Math.Sqrt(2.0) : 1.0);
+
+                    var cosVal = (v < 8 && y < 8) ? CosineTableY[v, y] :
+                        Math.Cos(((2.0 * y + 1.0) * v * Math.PI) / (2.0 * height));
+
+                    sum += temp[x, v] * alphaV * cosVal;
+                }
+
+                output[x, y] = sum * beta;
+            }
+        });
+    }
 }
