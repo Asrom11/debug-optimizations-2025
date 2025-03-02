@@ -4,6 +4,7 @@ using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
 using System.Runtime.CompilerServices;
+using System.Threading.Tasks;
 using JPEG.Images;
 using PixelFormat = JPEG.Images.PixelFormat;
 
@@ -35,8 +36,6 @@ public class JpegProcessor : IJpegProcessor
 
 	private static CompressedImage Compress(Matrix matrix, int quality = 50)
 	{
-		var allQuantizedBytes = new List<byte>();
-
 		var channels = new (string Name, Func<Pixel, double> Selector)[]
 		{
 			("Y", p => p.Y),
@@ -44,23 +43,41 @@ public class JpegProcessor : IJpegProcessor
 			("Cr", p => p.Cr)
 		};
 
-		for (var y = 0; y < matrix.Height; y += DCTSize)
+
+		var blocksY = matrix.Height / DCTSize;
+		var blocksX = matrix.Width / DCTSize;
+
+		var blockResults = new List<byte>[blocksY * blocksX];
+
+		Parallel.For(0, blocksY, yBlock =>
 		{
-			for (var x = 0; x < matrix.Width; x += DCTSize)
+			for (var xBlock = 0; xBlock < blocksX; xBlock++)
 			{
-				foreach (var channel in  channels)
+				var blockIndex = yBlock * blocksX + xBlock;
+				var localBytes = new List<byte>();
+				var y = yBlock * DCTSize;
+				var x = xBlock * DCTSize;
+
+				foreach (var channel in channels)
 				{
 					var subMatrix = channel.Name == "Y" ?
 						GetSubMatrix(matrix, y, DCTSize, x, DCTSize, channel.Selector) :
 						GetSubMatrixSubsampled(matrix, y, DCTSize, x, DCTSize, channel.Selector);
 
 					ShiftMatrixValues(subMatrix, -128);
-					var channelFreqs = DCT.DCT2D(subMatrix);
+					var channelFreqs = FFT.FFT2D(subMatrix);
 					var quantizedFreqs = Quantize(channelFreqs, quality);
 					var quantizedBytes = ZigZagScan(quantizedFreqs);
-					allQuantizedBytes.AddRange(quantizedBytes);
+					localBytes.AddRange(quantizedBytes);
 				}
+				blockResults[blockIndex] = localBytes;
 			}
+		});
+
+		var allQuantizedBytes = new List<byte>();
+		foreach (var t in blockResults)
+		{
+			allQuantizedBytes.AddRange(t);
 		}
 
 		long bitsCount;
@@ -78,46 +95,50 @@ public class JpegProcessor : IJpegProcessor
 	{
 		var result = new Matrix(image.Height, image.Width);
 		var decodedData = HuffmanCodec.Decode(image.CompressedBytes, image.DecodeTable, image.BitsCount);
-		var offset = 0;
 
-		for (var y = 0; y < image.Height; y += DCTSize)
+		var blocksY = image.Height / DCTSize;
+		var blocksX = image.Width / DCTSize;
+		var blockDataSize = 3 * DCTSize * DCTSize;
+
+		Parallel.For(0, blocksY, yBlock =>
 		{
-			for (var x = 0; x < image.Width; x += DCTSize)
+			for (var xBlock = 0; xBlock < blocksX; xBlock++)
 			{
+				int blockIndex = yBlock * blocksX + xBlock;
+				int blockOffset = blockIndex * blockDataSize;
+
 				var _y = new double[DCTSize, DCTSize];
 				var cb = new double[DCTSize, DCTSize];
 				var cr = new double[DCTSize, DCTSize];
 
 				for (var channelIndex = 0; channelIndex < 3; channelIndex++)
 				{
+					var channelOffset = blockOffset + channelIndex * (DCTSize * DCTSize);
 					var quantizedBytes = new byte[DCTSize * DCTSize];
-					Array.Copy(decodedData, offset, quantizedBytes, 0, quantizedBytes.Length);
-					offset += quantizedBytes.Length;
+					Array.Copy(decodedData, channelOffset, quantizedBytes, 0, quantizedBytes.Length);
 
 					var quantizedFreqs = ZigZagUnScan(quantizedBytes);
 					var channelFreqs = DeQuantize(quantizedFreqs, image.Quality);
 					switch (channelIndex)
 					{
 						case 0:
-							DCT.IDCT2D(channelFreqs, _y);
+							FFT.IFFT2D(channelFreqs, _y);
 							ShiftMatrixValues(_y, 128);
 							break;
 						case 1:
-							DCT.IDCT2D(channelFreqs, cb);
+							FFT.IFFT2D(channelFreqs, cb);
 							ShiftMatrixValues(cb, 128);
 							break;
 						default:
-							DCT.IDCT2D(channelFreqs, cr);
+							FFT.IFFT2D(channelFreqs, cr);
 							ShiftMatrixValues(cr, 128);
 							break;
 					}
-
 				}
 
-				SetPixels(result, _y, cb, cr, PixelFormat.YCbCr, y, x);
+				SetPixels(result, _y, cb, cr, PixelFormat.YCbCr, yBlock * DCTSize, xBlock * DCTSize);
 			}
-		}
-
+		});
 
 		return result;
 	}

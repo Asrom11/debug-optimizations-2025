@@ -3,13 +3,13 @@ using System.Linq;
 
 namespace JPEG.Images;
 
-public class Pixel
+public struct Pixel
 {
 	private readonly PixelFormat format;
 
 	public Pixel(double firstComponent, double secondComponent, double thirdComponent, PixelFormat pixelFormat)
 	{
-		if (!new[] { PixelFormat.RGB, PixelFormat.YCbCr }.Contains(pixelFormat))
+		if  (PixelFormat.RGB != pixelFormat && PixelFormat.YCbCr != pixelFormat )
 			throw new FormatException("Unknown pixel format: " + pixelFormat);
 		format = pixelFormat;
 		if (pixelFormat == PixelFormat.RGB)

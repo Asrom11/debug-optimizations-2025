@@ -1,6 +1,6 @@
 ﻿namespace JPEG.Images;
 
-public class PixelFormat
+public struct PixelFormat
 {
 	private string Format;
 
@@ -12,7 +12,7 @@ public class PixelFormat
 	public static PixelFormat RGB => new PixelFormat(nameof(RGB));
 	public static PixelFormat YCbCr => new PixelFormat(nameof(YCbCr));
 
-	protected bool Equals(PixelFormat other)
+	 bool Equals(PixelFormat other)
 	{
 		return string.Equals(Format, other.Format);
 	}
@@ -41,10 +41,5 @@ public class PixelFormat
 	public override string ToString()
 	{
 		return Format;
-	}
-
-	~PixelFormat()
-	{
-		Format = null;
 	}
 }
