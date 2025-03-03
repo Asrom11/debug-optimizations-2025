@@ -48,8 +48,8 @@ public static class MatrixBitmapConverter
 
     public static unsafe Bitmap MatrixToBitmap(Matrix matrix)
     {
-        int width = matrix.Width;
-        int height = matrix.Height;
+        var width = matrix.Width;
+        var height = matrix.Height;
 
 
         var bmp = new Bitmap(width, height, System.Drawing.Imaging.PixelFormat.Format24bppRgb);
